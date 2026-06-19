@@ -36,6 +36,8 @@ def main():
         deal_reached = orchestrator.negotiate(task, specialist)
         if deal_reached:
             orchestrator.execute_and_pay(task, specialist)
+            if task.result and i < len(tasks):
+                tasks[i].context = task.result
 
     print("\n" + "=" * 60)
     print("FINAL REPORT")

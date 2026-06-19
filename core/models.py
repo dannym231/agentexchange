@@ -31,6 +31,7 @@ class Task:
     assigned_to: Optional[str] = None
     final_price: Optional[float] = None
     result: Optional[str] = None
+    context: Optional[str] = None
     created_at: float = field(default_factory=time.time)
 
 

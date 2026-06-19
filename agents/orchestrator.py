@@ -40,8 +40,13 @@ class OrchestratorAgent(BaseAgent):
         print(f"\n  Negotiating task with {specialist.agent_id} (budget: {task.max_budget:.2f})")
         print(f"  Task: {task.description}")
 
+        last_bid = None
         for round_num in range(1, max_rounds + 1):
-            bid = specialist.submit_bid(task.description, round_num)
+            feedback = None
+            if round_num > 1:
+                feedback = f"Your bid of {last_bid:.2f} exceeded the budget of {task.max_budget:.2f}. Please lower your price."
+            bid = specialist.submit_bid(task.description, round_num, feedback=feedback)
+            last_bid = bid.price
             print(f"  Round {round_num}: {specialist.agent_id} bids {bid.price:.2f} — \"{bid.reasoning}\"")
 
             if bid.price <= task.max_budget:
@@ -59,7 +64,7 @@ class OrchestratorAgent(BaseAgent):
 
     def execute_and_pay(self, task: Task, specialist: SpecialistAgent):
         """Specialist does the work, orchestrator pays them."""
-        result = specialist.execute_task(task.description)
+        result = specialist.execute_task(task.description, context=task.context)
         task.result = result
         task.status = TaskStatus.COMPLETED
 

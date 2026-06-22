@@ -1,0 +1,137 @@
+import math
+import unittest
+from unittest.mock import Mock, patch
+
+import requests
+
+from agents.trader import TraderAgent
+from core.market import Market, MarketDataError, fetch_eth_price
+from core.models import Prediction, Round
+
+
+class WalletAndStakeTests(unittest.TestCase):
+    def test_debit_rejects_invalid_amounts_and_overdrafts(self):
+        trader = TraderAgent("trader", "conservative", wallet_balance=1.0)
+        for amount in (0.0, -1.0, math.nan, math.inf):
+            with self.subTest(amount=amount), self.assertRaises(ValueError):
+                trader.debit(amount)
+        with self.assertRaises(ValueError):
+            trader.debit(1.01)
+        self.assertEqual(trader.wallet_balance, 1.0)
+
+    def test_credit_rejects_invalid_amounts(self):
+        trader = TraderAgent("trader", "conservative")
+        for amount in (0.0, -1.0, math.nan, math.inf):
+            with self.subTest(amount=amount), self.assertRaises(ValueError):
+                trader.credit(amount)
+
+    def test_low_balance_trader_is_skipped(self):
+        trader = TraderAgent("trader", "conservative", wallet_balance=0.49)
+        trader.predict = Mock()
+        market = Market([trader])
+        predictions = market.collect_predictions(Round(id=1, open_price=100.0))
+        self.assertEqual(predictions, [])
+        trader.predict.assert_not_called()
+        self.assertEqual(trader.wallet_balance, 0.49)
+
+    def test_stake_is_capped_at_wallet_balance(self):
+        trader = TraderAgent("trader", "degen", wallet_balance=1.25)
+        with patch.object(trader, "think_json", return_value={"direction": "UP", "stake": 5.0}):
+            prediction = trader.predict(100.0)
+        self.assertEqual(prediction.stake, 1.25)
+
+    def test_invalid_model_stakes_are_rejected(self):
+        trader = TraderAgent("trader", "degen")
+        for stake in (0.0, -1.0, math.nan, math.inf):
+            with self.subTest(stake=stake):
+                with patch.object(trader, "think_json", return_value={"direction": "UP", "stake": stake}):
+                    with self.assertRaises(ValueError):
+                        trader.predict(100.0)
+
+    def test_invalid_prediction_is_skipped_without_debit(self):
+        valid = TraderAgent("valid", "momentum", wallet_balance=10.0)
+        invalid = TraderAgent("invalid", "degen", wallet_balance=10.0)
+        valid.predict = Mock(return_value=Prediction("valid", "UP", 2.0, "test"))
+        invalid.predict = Mock(side_effect=ValueError("bad stake"))
+
+        predictions = Market([valid, invalid]).collect_predictions(Round(id=1, open_price=100.0))
+
+        self.assertEqual([p.agent_id for p in predictions], ["valid"])
+        self.assertEqual(valid.wallet_balance, 8.0)
+        self.assertEqual(invalid.wallet_balance, 10.0)
+
+
+class SettlementTests(unittest.TestCase):
+    def test_no_winner_voids_and_refunds_round(self):
+        traders = [
+            TraderAgent("one", "momentum", wallet_balance=10.0),
+            TraderAgent("two", "contrarian", wallet_balance=10.0),
+        ]
+        predictions = [
+            Prediction("one", "UP", 2.0, "test"),
+            Prediction("two", "FLAT", 3.0, "test"),
+        ]
+        for trader, prediction in zip(traders, predictions):
+            trader.debit(prediction.stake)
+        round_ = Round(id=1, open_price=100.0, close_price=99.0, outcome="DOWN", predictions=predictions)
+
+        pnl = Market(traders).settle(round_)
+
+        self.assertEqual(pnl, {"one": 0.0, "two": 0.0})
+        self.assertEqual([t.wallet_balance for t in traders], [10.0, 10.0])
+        self.assertEqual([t.pushes for t in traders], [1, 1])
+        self.assertTrue(all(p.outcome == "VOID" and p.pnl == 0.0 for p in predictions))
+        self.assertEqual(sum(t.wallet_balance for t in traders), 20.0)
+
+    def test_normal_settlement_preserves_total_credits(self):
+        winner = TraderAgent("winner", "momentum", wallet_balance=10.0)
+        loser = TraderAgent("loser", "contrarian", wallet_balance=10.0)
+        predictions = [
+            Prediction("winner", "UP", 2.0, "test"),
+            Prediction("loser", "DOWN", 3.0, "test"),
+        ]
+        winner.debit(2.0)
+        loser.debit(3.0)
+        round_ = Round(id=1, open_price=100.0, close_price=101.0, outcome="UP", predictions=predictions)
+
+        Market([winner, loser]).settle(round_)
+
+        self.assertEqual(sum(t.wallet_balance for t in (winner, loser)), 20.0)
+        self.assertEqual(winner.wallet_balance, 13.0)
+        self.assertEqual(loser.wallet_balance, 7.0)
+
+
+class MarketDataTests(unittest.TestCase):
+    @patch("core.market.time.sleep")
+    @patch("core.market.requests.get", side_effect=requests.ConnectionError("offline"))
+    def test_price_failures_are_wrapped_cleanly(self, get, sleep):
+        with self.assertRaisesRegex(MarketDataError, "Unable to fetch"):
+            fetch_eth_price()
+        self.assertEqual(get.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    @patch("core.market.fetch_eth_price", side_effect=MarketDataError("offline"))
+    def test_open_failure_creates_no_round(self, fetch):
+        market = Market([])
+        with self.assertRaises(MarketDataError):
+            market.open_round()
+        self.assertEqual(market.rounds, [])
+
+    @patch("core.market.fetch_eth_price", side_effect=MarketDataError("offline"))
+    def test_close_failure_voids_and_refunds(self, fetch):
+        trader = TraderAgent("trader", "momentum", wallet_balance=10.0)
+        prediction = Prediction("trader", "UP", 2.0, "test")
+        trader.debit(2.0)
+        round_ = Round(id=1, open_price=100.0, predictions=[prediction])
+
+        with self.assertRaises(MarketDataError):
+            Market([trader]).close_round(round_)
+
+        self.assertEqual(trader.wallet_balance, 10.0)
+        self.assertEqual(trader.pushes, 1)
+        self.assertEqual(prediction.outcome, "VOID")
+        self.assertEqual(prediction.pnl, 0.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

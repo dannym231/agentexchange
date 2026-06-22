@@ -1,5 +1,7 @@
+import math
+
 from agents.base import BaseAgent
-from core.models import AgentRole, Prediction
+from core.models import AgentRole, Prediction, MIN_STAKE, MAX_STAKE
 
 
 TRADER_PERSONALITIES = {
@@ -74,7 +76,11 @@ class TraderAgent(BaseAgent):
         if direction not in ("UP", "DOWN", "FLAT"):
             direction = "FLAT"
         stake = float(result["stake"])
-        stake = max(0.5, min(stake, self.wallet_balance, 5.0))
+        if not math.isfinite(stake) or stake <= 0:
+            raise ValueError("stake must be finite and positive")
+        if self.wallet_balance < MIN_STAKE:
+            raise ValueError("wallet balance is below the minimum stake")
+        stake = min(max(stake, MIN_STAKE), self.wallet_balance, MAX_STAKE)
         return Prediction(
             agent_id=self.agent_id,
             direction=direction,

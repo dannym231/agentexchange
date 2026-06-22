@@ -3,6 +3,9 @@ from typing import Optional
 from enum import Enum
 import time
 
+MIN_STAKE = 0.5
+MAX_STAKE = 5.0
+
 
 class AgentRole(Enum):
     TRADER = "trader"

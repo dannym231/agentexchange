@@ -1,8 +1,10 @@
 import time
 import sys
 
+from anthropic import APIError
+
 from agents.trader import TraderAgent
-from core.market import Market, ROUND_DURATION_SECS
+from core.market import Market, MarketDataError, ROUND_DURATION_SECS
 from core.models import Round
 
 # ── Agents ───────────────────────────────────────────────────────────────────
@@ -37,7 +39,7 @@ def print_results(round_: Round):
     divider()
     for p in round_.predictions:
         sign = "+" if p.pnl >= 0 else ""
-        marker = "WIN " if p.outcome == "WIN" else "loss"
+        marker = {"WIN": "WIN ", "LOSS": "loss", "VOID": "void"}[p.outcome]
         print(f"  {p.agent_id:>14}   {p.direction:4}  {p.stake:>5.1f}   {sign}{p.pnl:>6.2f}   {marker}")
 
 def print_leaderboard(traders: list):
@@ -45,14 +47,13 @@ def print_leaderboard(traders: list):
     print("  LEADERBOARD")
     divider("═")
     ranked = sorted(traders, key=lambda t: t.wallet_balance, reverse=True)
-    print(f"  {'RANK':>4}  {'AGENT':>14}  {'PERSONALITY':>12}  {'BAL':>8}  {'W':>3}  {'L':>3}  WIN%")
+    print(f"  {'RANK':>4}  {'AGENT':>14}  {'PERSONALITY':>12}  {'BAL':>8}  {'W':>3}  {'L':>3}  {'P':>3}  WIN%")
     divider()
     for i, t in enumerate(ranked, 1):
-        total = t.wins + t.losses
-        winpct = f"{t.win_rate:.0%}" if total > 0 else " —"
+        winpct = f"{t.win_rate:.0%}" if t.total_rounds > 0 else " —"
         print(
             f"  {i:>4}  {t.agent_id:>14}  {t.personality_name:>12}"
-            f"  {t.wallet_balance:>8.2f}  {t.wins:>3}  {t.losses:>3}  {winpct:>4}"
+            f"  {t.wallet_balance:>8.2f}  {t.wins:>3}  {t.losses:>3}  {t.pushes:>3}  {winpct:>4}"
         )
     divider("═")
 
@@ -95,12 +96,25 @@ def main():
 
             # Open
             print("  Fetching live ETH price...")
-            round_ = market.open_round()
+            try:
+                round_ = market.open_round()
+            except MarketDataError as exc:
+                print(f"  ERROR: {exc}")
+                print("  No stakes were collected. Stopping.")
+                break
             print(f"  Open price: ${round_.open_price:>10,.2f}\n")
 
             # Predictions
             print("  Collecting agent predictions...")
-            market.collect_predictions(round_)
+            try:
+                predictions = market.collect_predictions(round_)
+            except APIError as exc:
+                print(f"  ERROR: Unable to collect predictions: {exc}")
+                print("  No stakes were collected. Stopping.")
+                break
+            if not predictions:
+                print("  No eligible traders produced valid predictions. Stopping.")
+                break
             print_predictions(round_)
 
             # Wait
@@ -109,7 +123,12 @@ def main():
 
             # Close + settle
             print("  Fetching close price...")
-            market.close_round(round_)
+            try:
+                market.close_round(round_)
+            except MarketDataError as exc:
+                print(f"  ERROR: {exc}")
+                print("  Round voided; all stakes were refunded. Stopping.")
+                break
             market.settle(round_)
             print_results(round_)
 

@@ -1,5 +1,6 @@
 import os
 import json
+import math
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
@@ -9,6 +10,8 @@ client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 class BaseAgent:
     def __init__(self, agent_id: str, role, wallet_balance: float = 10.0):
+        if not math.isfinite(wallet_balance) or wallet_balance < 0:
+            raise ValueError("wallet balance must be finite and non-negative")
         self.agent_id = agent_id
         self.role = role
         self.wallet_balance = wallet_balance
@@ -56,9 +59,15 @@ class BaseAgent:
         return json.loads(raw.strip())
 
     def debit(self, amount: float):
+        if not math.isfinite(amount) or amount <= 0:
+            raise ValueError("debit amount must be finite and positive")
+        if amount > self.wallet_balance:
+            raise ValueError("debit amount exceeds wallet balance")
         self.wallet_balance -= amount
 
     def credit(self, amount: float):
+        if not math.isfinite(amount) or amount <= 0:
+            raise ValueError("credit amount must be finite and positive")
         self.wallet_balance += amount
 
     def __repr__(self):

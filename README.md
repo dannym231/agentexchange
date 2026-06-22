@@ -84,13 +84,11 @@ Omit `--rounds` to continue until interrupted with `Ctrl-C`.
 ## Current limitations
 
 - Wallets, predictions, and results are held only in memory.
-- There is no automated test suite or simulation mode.
-- Price retrieval depends on the public CoinGecko API and has no retry or fallback provider.
+- There is no simulation mode; correctness coverage currently uses lightweight unit tests.
+- Price retrieval depends on the public CoinGecko API and has no fallback provider.
 - Model calls are sequential, increasing latency and API cost.
 - Model-generated JSON has no schema validation or retry strategy.
 - Trader prompts use a fixed model name and fixed strategy parameters.
-- There is no settlement policy for a round with no winning predictions; all committed stakes remain debited.
-- Agents can continue attempting predictions after exhausting their bankroll.
 - The system has no authentication, audit log, or independently verifiable result record.
 
 ## Next steps toward AgentCred

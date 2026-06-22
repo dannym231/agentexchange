@@ -28,6 +28,25 @@ class BaseAgent:
                 return block.text
         return ""
 
+    def think_with_tools(self, system_prompt: str, user_message: str, tools: list) -> str:
+        """Run a request with server-side tools, looping on pause_turn."""
+        messages = [{"role": "user", "content": user_message}]
+        response = None
+        for _ in range(5):
+            response = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=4096,
+                system=system_prompt,
+                tools=tools,
+                messages=messages,
+            )
+            messages.append({"role": "assistant", "content": response.content})
+            if response.stop_reason != "pause_turn":
+                break
+        if response is None:
+            return ""
+        return " ".join(b.text for b in response.content if b.type == "text")
+
     def think_json(self, system_prompt: str, user_message: str) -> dict:
         raw = self.think(system_prompt, user_message).strip()
         if raw.startswith("```"):

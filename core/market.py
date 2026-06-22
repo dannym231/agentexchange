@@ -15,6 +15,20 @@ class MarketDataError(RuntimeError):
     """Raised when a valid live market price cannot be retrieved."""
 
 
+class MockPriceFeed:
+    """Repeatable three-round UP, DOWN, FLAT price sequence."""
+
+    PRICES = (1000.0, 1002.0, 1002.0, 999.0, 999.0, 1000.0)
+
+    def __init__(self):
+        self._index = 0
+
+    def __call__(self) -> float:
+        price = self.PRICES[self._index % len(self.PRICES)]
+        self._index += 1
+        return price
+
+
 def fetch_eth_price() -> float:
     last_error = None
     for attempt in range(PRICE_FETCH_ATTEMPTS):
@@ -43,14 +57,15 @@ def determine_outcome(open_price: float, close_price: float) -> str:
 
 
 class Market:
-    def __init__(self, traders: list, round_duration: int = ROUND_DURATION_SECS):
+    def __init__(self, traders: list, round_duration: int = ROUND_DURATION_SECS, price_provider=None):
         self.traders = traders
         self.round_duration = round_duration
+        self.price_provider = price_provider or fetch_eth_price
         self.rounds: list[Round] = []
         self._trader_map = {t.agent_id: t for t in traders}
 
     def open_round(self) -> Round:
-        price = fetch_eth_price()
+        price = self.price_provider()
         round_ = Round(id=len(self.rounds) + 1, open_price=price)
         self.rounds.append(round_)
         return round_
@@ -85,7 +100,7 @@ class Market:
 
     def close_round(self, round_: Round) -> tuple[float, str]:
         try:
-            round_.close_price = fetch_eth_price()
+            round_.close_price = self.price_provider()
         except MarketDataError:
             self.void_round(round_)
             raise

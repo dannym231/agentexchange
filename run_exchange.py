@@ -3,18 +3,20 @@ import sys
 
 from anthropic import APIError
 
-from agents.trader import TraderAgent
-from core.market import Market, MarketDataError, ROUND_DURATION_SECS
+from agents.trader import MockTraderAgent, TraderAgent
+from core.market import Market, MarketDataError, MockPriceFeed, ROUND_DURATION_SECS
 from core.models import Round
 
 # ── Agents ───────────────────────────────────────────────────────────────────
 
-TRADERS = [
-    TraderAgent("momentum-01",    "momentum",    wallet_balance=20.0),
-    TraderAgent("contrarian-01",  "contrarian",  wallet_balance=20.0),
-    TraderAgent("conservative-01","conservative",wallet_balance=20.0),
-    TraderAgent("degen-01",       "degen",       wallet_balance=20.0),
-]
+def build_traders(mock: bool = False) -> list[TraderAgent]:
+    trader_class = MockTraderAgent if mock else TraderAgent
+    return [
+        trader_class("momentum-01",     "momentum",     wallet_balance=20.0),
+        trader_class("contrarian-01",   "contrarian",   wallet_balance=20.0),
+        trader_class("conservative-01", "conservative", wallet_balance=20.0),
+        trader_class("degen-01",        "degen",        wallet_balance=20.0),
+    ]
 
 
 # ── Display helpers ───────────────────────────────────────────────────────────
@@ -70,8 +72,12 @@ def countdown(seconds: int):
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 def main():
+    mock_mode = "--mock" in sys.argv
     duration = ROUND_DURATION_SECS
-    if "--fast" in sys.argv:
+    if mock_mode:
+        duration = 0
+        print("  [mock mode: deterministic prices and predictions]\n")
+    elif "--fast" in sys.argv:
         duration = 30
         print("  [fast mode: 30-second rounds]\n")
 
@@ -80,11 +86,14 @@ def main():
         if arg.startswith("--rounds="):
             max_rounds = int(arg.split("=")[1])
 
-    market = Market(TRADERS, round_duration=duration)
+    traders = build_traders(mock=mock_mode)
+    price_provider = MockPriceFeed() if mock_mode else None
+    market = Market(traders, round_duration=duration, price_provider=price_provider)
     round_num = 0
 
     print("=" * 70)
-    print("  AGENTEXCHANGE — Live ETH Prediction Market")
+    mode = "Mock" if mock_mode else "Live"
+    print(f"  AGENTEXCHANGE — {mode} ETH Prediction Market")
     print("=" * 70)
     print("  Press Ctrl-C at any time to stop.\n")
 
@@ -95,7 +104,7 @@ def main():
             divider("═")
 
             # Open
-            print("  Fetching live ETH price...")
+            print("  Getting mock ETH price..." if mock_mode else "  Fetching live ETH price...")
             try:
                 round_ = market.open_round()
             except MarketDataError as exc:
@@ -119,10 +128,11 @@ def main():
 
             # Wait
             print()
-            countdown(duration)
+            if duration > 0:
+                countdown(duration)
 
             # Close + settle
-            print("  Fetching close price...")
+            print("  Getting mock close price..." if mock_mode else "  Fetching close price...")
             try:
                 market.close_round(round_)
             except MarketDataError as exc:
@@ -134,13 +144,13 @@ def main():
 
             # Leaderboard
             print()
-            print_leaderboard(TRADERS)
+            print_leaderboard(traders)
             print()
 
     except KeyboardInterrupt:
         print("\n\n  Stopped.")
 
-    print_leaderboard(TRADERS)
+    print_leaderboard(traders)
 
 
 if __name__ == "__main__":

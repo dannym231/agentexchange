@@ -4,8 +4,8 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from agents.trader import TraderAgent
-from core.market import Market, MarketDataError, fetch_eth_price
+from agents.trader import MockTraderAgent, TraderAgent
+from core.market import Market, MarketDataError, MockPriceFeed, fetch_eth_price
 from core.models import Prediction, Round
 
 
@@ -131,6 +131,38 @@ class MarketDataTests(unittest.TestCase):
         self.assertEqual(trader.pushes, 1)
         self.assertEqual(prediction.outcome, "VOID")
         self.assertEqual(prediction.pnl, 0.0)
+
+
+class MockModeTests(unittest.TestCase):
+    @patch("core.market.requests.get")
+    def test_mock_price_feed_never_calls_coingecko(self, get):
+        market = Market([], price_provider=MockPriceFeed())
+        outcomes = []
+        for _ in range(3):
+            round_ = market.open_round()
+            market.close_round(round_)
+            outcomes.append(round_.outcome)
+
+        self.assertEqual(outcomes, ["UP", "DOWN", "FLAT"])
+        get.assert_not_called()
+
+    @patch.object(TraderAgent, "think_json", side_effect=AssertionError("Anthropic path called"))
+    def test_mock_traders_never_call_anthropic(self, think_json):
+        traders = [
+            MockTraderAgent("momentum", "momentum"),
+            MockTraderAgent("contrarian", "contrarian"),
+            MockTraderAgent("conservative", "conservative"),
+            MockTraderAgent("degen", "degen"),
+        ]
+        market = Market(traders, price_provider=MockPriceFeed())
+        round_ = market.open_round()
+        predictions = market.collect_predictions(round_)
+
+        self.assertEqual(
+            [p.direction for p in predictions],
+            ["UP", "DOWN", "FLAT", "UP"],
+        )
+        think_json.assert_not_called()
 
 
 if __name__ == "__main__":

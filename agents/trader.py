@@ -104,3 +104,33 @@ class TraderAgent(BaseAgent):
             f"  W{self.wins}/L{self.losses}/P{self.pushes}"
             f"  ({self.win_rate:.0%} win rate)"
         )
+
+
+MOCK_PREDICTIONS = {
+    "momentum": [("UP", 3.0), ("DOWN", 3.0), ("UP", 3.0)],
+    "contrarian": [("DOWN", 2.5), ("UP", 2.5), ("DOWN", 2.5)],
+    "conservative": [("FLAT", 0.5), ("FLAT", 0.5), ("FLAT", 0.5)],
+    "degen": [("UP", 5.0), ("DOWN", 5.0), ("UP", 5.0)],
+}
+
+
+class MockTraderAgent(TraderAgent):
+    """Deterministic trader used by local mock mode without model calls."""
+
+    def __init__(self, agent_id: str, personality: str, wallet_balance: float = 20.0):
+        super().__init__(agent_id, personality, wallet_balance)
+        self._prediction_index = 0
+
+    def predict(self, current_price: float, context: str = None) -> Prediction:
+        choices = MOCK_PREDICTIONS[self.personality]
+        direction, requested_stake = choices[self._prediction_index % len(choices)]
+        self._prediction_index += 1
+        stake = min(requested_stake, self.wallet_balance, MAX_STAKE)
+        if stake < MIN_STAKE:
+            raise ValueError("wallet balance is below the minimum stake")
+        return Prediction(
+            agent_id=self.agent_id,
+            direction=direction,
+            stake=stake,
+            reasoning=f"Deterministic {self.personality} mock prediction.",
+        )

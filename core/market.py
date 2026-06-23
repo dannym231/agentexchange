@@ -1,12 +1,23 @@
+from dataclasses import dataclass
+from decimal import Decimal, ROUND_DOWN
 import math
 import time
 
 import requests
-from core.models import Round, Prediction, MIN_STAKE
+from core.models import (
+    CREDIT_QUANTUM,
+    Direction,
+    MIN_STAKE,
+    Prediction,
+    PredictionState,
+    Round,
+    RoundState,
+    credits,
+)
 
 COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd"
-FLAT_THRESHOLD_PCT = 0.15   # moves smaller than this % count as FLAT
-ROUND_DURATION_SECS = 300   # 5 minutes
+FLAT_THRESHOLD_PCT = 0.15
+ROUND_DURATION_SECS = 300
 PRICE_FETCH_ATTEMPTS = 3
 PRICE_RETRY_DELAY_SECS = 1
 
@@ -48,12 +59,92 @@ def fetch_eth_price() -> float:
 
 
 def determine_outcome(open_price: float, close_price: float) -> str:
-    pct = (close_price - open_price) / open_price * 100
-    if pct > FLAT_THRESHOLD_PCT:
-        return "UP"
-    elif pct < -FLAT_THRESHOLD_PCT:
-        return "DOWN"
-    return "FLAT"
+    """Pure price classification for a completed round."""
+    if not all(math.isfinite(p) and p > 0 for p in (open_price, close_price)):
+        raise ValueError("prices must be finite and positive")
+    open_decimal = Decimal(str(open_price))
+    close_decimal = Decimal(str(close_price))
+    pct = (close_decimal - open_decimal) / open_decimal * 100
+    threshold = Decimal(str(FLAT_THRESHOLD_PCT))
+    if pct > threshold:
+        return Direction.UP.value
+    if pct < -threshold:
+        return Direction.DOWN.value
+    return Direction.FLAT.value
+
+
+@dataclass(frozen=True)
+class SettlementLine:
+    agent_id: str
+    state: PredictionState
+    pnl: Decimal
+    credit: Decimal
+
+
+def calculate_settlement(predictions: list[Prediction], outcome: str) -> tuple[SettlementLine, ...]:
+    """Pure, zero-sum settlement math. Returned credits are safe to apply once."""
+    direction = Direction(outcome).value
+    if any(p.state != PredictionState.PENDING for p in predictions):
+        raise ValueError("prediction has already been settled")
+
+    winner_indexes = [i for i, p in enumerate(predictions) if p.direction == direction]
+    if not winner_indexes:
+        return tuple(
+            SettlementLine(p.agent_id, PredictionState.VOID, credits(0), p.stake)
+            for p in predictions
+        )
+
+    losing_pool = sum(
+        (p.stake for p in predictions if p.direction != direction), Decimal("0.00")
+    )
+    winning_total = sum((predictions[i].stake for i in winner_indexes), Decimal("0.00"))
+
+    profits = {i: Decimal("0.00") for i in winner_indexes}
+    remainders = []
+    allocated = Decimal("0.00")
+    for i in winner_indexes:
+        exact = predictions[i].stake * losing_pool / winning_total
+        rounded_down = exact.quantize(CREDIT_QUANTUM, rounding=ROUND_DOWN)
+        profits[i] = rounded_down
+        allocated += rounded_down
+        remainders.append((exact - rounded_down, i))
+
+    remaining_units = int((losing_pool - allocated) / CREDIT_QUANTUM)
+    for _, i in sorted(remainders, key=lambda item: (-item[0], item[1]))[:remaining_units]:
+        profits[i] += CREDIT_QUANTUM
+
+    lines = []
+    for i, prediction in enumerate(predictions):
+        if i in profits:
+            profit = profits[i]
+            lines.append(
+                SettlementLine(
+                    prediction.agent_id,
+                    PredictionState.WON,
+                    profit,
+                    prediction.stake + profit,
+                )
+            )
+        else:
+            lines.append(
+                SettlementLine(
+                    prediction.agent_id,
+                    PredictionState.LOST,
+                    -prediction.stake,
+                    Decimal("0.00"),
+                )
+            )
+    return tuple(lines)
+
+
+def calculate_void(predictions: list[Prediction]) -> tuple[SettlementLine, ...]:
+    """Pure refund plan for a round that cannot be settled."""
+    if any(p.state != PredictionState.PENDING for p in predictions):
+        raise ValueError("prediction has already been settled")
+    return tuple(
+        SettlementLine(p.agent_id, PredictionState.VOID, credits(0), p.stake)
+        for p in predictions
+    )
 
 
 class Market:
@@ -71,7 +162,8 @@ class Market:
         return round_
 
     def collect_predictions(self, round_: Round) -> list[Prediction]:
-        # Pass last round's result as context so agents can reason about recent moves
+        if round_.state != RoundState.OPEN:
+            raise ValueError("predictions can only be collected for an open round")
         context = None
         if len(self.rounds) >= 2:
             prev = self.rounds[-2]
@@ -83,7 +175,7 @@ class Market:
 
         pending_predictions = []
         for trader in self.traders:
-            if trader.wallet_balance < MIN_STAKE:
+            if trader.wallet_credits < MIN_STAKE:
                 continue
             try:
                 pred = trader.predict(round_.open_price, context=context)
@@ -99,55 +191,48 @@ class Market:
         return round_.predictions
 
     def close_round(self, round_: Round) -> tuple[float, str]:
+        if round_.state != RoundState.OPEN:
+            raise ValueError("only an open round can be closed")
         try:
             round_.close_price = self.price_provider()
         except MarketDataError:
             self.void_round(round_)
             raise
         round_.outcome = determine_outcome(round_.open_price, round_.close_price)
+        round_.state = RoundState.CLOSED
         return round_.close_price, round_.outcome
 
-    def void_round(self, round_: Round) -> dict[str, float]:
-        """Refund every unsettled prediction and record the round as a void."""
-        pnl = {}
-        for p in round_.predictions:
-            if p.outcome is not None:
-                raise ValueError("round has already been settled")
-            trader = self._trader_map[p.agent_id]
-            trader.credit(p.stake)
-            trader.pushes += 1
-            p.pnl = 0.0
-            p.outcome = "VOID"
-            pnl[p.agent_id] = 0.0
-        return pnl
-
-    def settle(self, round_: Round) -> dict[str, float]:
-        """Zero-sum pool: losers' stakes are split among winners proportionally."""
-        winners = [p for p in round_.predictions if p.direction == round_.outcome]
-        losers  = [p for p in round_.predictions if p.direction != round_.outcome]
-
-        losing_pool   = sum(p.stake for p in losers)
-        winning_total = sum(p.stake for p in winners)
-
-        if any(p.outcome is not None for p in round_.predictions):
+    def void_round(self, round_: Round) -> dict[str, Decimal]:
+        if round_.state in (RoundState.SETTLED, RoundState.VOID):
             raise ValueError("round has already been settled")
-        if not winners:
-            return self.void_round(round_)
+        lines = calculate_void(round_.predictions)
+        self._apply(round_, lines, RoundState.VOID)
+        return {line.agent_id: line.pnl for line in lines}
 
-        pnl = {}
-        for p in round_.predictions:
-            trader = self._trader_map[p.agent_id]
-            if p.direction == round_.outcome:
-                profit = p.stake / winning_total * losing_pool
-                p.pnl = profit
-                p.outcome = "WIN"
-                trader.credit(p.stake + profit)  # return stake + winnings
+    def settle(self, round_: Round) -> dict[str, Decimal]:
+        if round_.state != RoundState.CLOSED or round_.outcome is None:
+            raise ValueError("only a closed round can be settled")
+        lines = calculate_settlement(round_.predictions, round_.outcome)
+        final_state = RoundState.VOID if not lines or all(
+            line.state == PredictionState.VOID for line in lines
+        ) else RoundState.SETTLED
+        self._apply(round_, lines, final_state)
+        return {line.agent_id: line.pnl for line in lines}
+
+    def _apply(self, round_: Round, lines: tuple[SettlementLine, ...], state: RoundState) -> None:
+        if len(lines) != len(round_.predictions):
+            raise ValueError("invalid settlement plan")
+        if any(p.agent_id not in self._trader_map for p in round_.predictions):
+            raise ValueError("settlement references an unknown trader")
+        for prediction, line in zip(round_.predictions, lines):
+            trader = self._trader_map[prediction.agent_id]
+            if line.credit > 0:
+                trader.credit(line.credit)
+            prediction.mark(line.state, line.pnl)
+            if line.state == PredictionState.WON:
                 trader.wins += 1
-            else:
-                p.pnl = -p.stake
-                p.outcome = "LOSS"
-                # stake was already debited at prediction time; nothing to credit back
+            elif line.state == PredictionState.LOST:
                 trader.losses += 1
-            pnl[p.agent_id] = p.pnl
-
-        return pnl
+            else:
+                trader.pushes += 1
+        round_.state = state

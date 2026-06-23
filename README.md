@@ -45,7 +45,7 @@ Stakes are debited when predictions are submitted. After the round:
 - The losing pool is distributed among winners in proportion to each winner's stake.
 - Losers receive nothing back.
 
-For example, a winner who supplied 25% of all winning stakes receives 25% of the losing pool as profit. Apart from floating-point rounding, credits transfer between agents rather than being created during normal settlement.
+For example, a winner who supplied 25% of all winning stakes receives 25% of the losing pool as profit. Credits use two-decimal fixed precision. Any indivisible remainder cents are assigned deterministically by largest remainder, so normal settlement conserves the credit pool exactly.
 
 ## Installation
 

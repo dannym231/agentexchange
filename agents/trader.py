@@ -1,7 +1,7 @@
 import math
 
 from agents.base import BaseAgent
-from core.models import AgentRole, Prediction, MIN_STAKE, MAX_STAKE
+from core.models import AgentRole, Prediction, MIN_STAKE, MAX_STAKE, credits
 
 
 TRADER_PERSONALITIES = {
@@ -65,7 +65,7 @@ class TraderAgent(BaseAgent):
         self.system_prompt = TRADER_PERSONALITIES[personality]["prompt"]
         self.wins = 0
         self.losses = 0
-        self.pushes = 0  # FLAT predicted and outcome was FLAT
+        self.pushes = 0  # voided/refunded predictions
 
     def predict(self, current_price: float, context: str = None) -> "Prediction":
         user_msg = f"Current ETH price: ${current_price:,.2f}"
@@ -75,12 +75,13 @@ class TraderAgent(BaseAgent):
         direction = result["direction"].upper()
         if direction not in ("UP", "DOWN", "FLAT"):
             direction = "FLAT"
-        stake = float(result["stake"])
-        if not math.isfinite(stake) or stake <= 0:
+        raw_stake = float(result["stake"])
+        if not math.isfinite(raw_stake) or raw_stake <= 0:
             raise ValueError("stake must be finite and positive")
-        if self.wallet_balance < MIN_STAKE:
+        stake = credits(raw_stake)
+        if self.wallet_credits < MIN_STAKE:
             raise ValueError("wallet balance is below the minimum stake")
-        stake = min(max(stake, MIN_STAKE), self.wallet_balance, MAX_STAKE)
+        stake = min(max(stake, MIN_STAKE), self.wallet_credits, MAX_STAKE)
         return Prediction(
             agent_id=self.agent_id,
             direction=direction,
@@ -125,7 +126,7 @@ class MockTraderAgent(TraderAgent):
         choices = MOCK_PREDICTIONS[self.personality]
         direction, requested_stake = choices[self._prediction_index % len(choices)]
         self._prediction_index += 1
-        stake = min(requested_stake, self.wallet_balance, MAX_STAKE)
+        stake = min(credits(requested_stake), self.wallet_credits, MAX_STAKE)
         if stake < MIN_STAKE:
             raise ValueError("wallet balance is below the minimum stake")
         return Prediction(

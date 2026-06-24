@@ -4,9 +4,34 @@ from unittest.mock import Mock, patch
 
 import requests
 
+from agents.base import BaseAgent
 from agents.trader import MockTraderAgent, TraderAgent
 from core.market import Market, MarketDataError, MockPriceFeed, fetch_eth_price
-from core.models import Prediction, Round
+from core.models import AgentRole, Prediction, Round
+
+
+class AgentCredAdapterTests(unittest.TestCase):
+    def test_base_agent_owns_matching_agentcred_identity(self):
+        agent = BaseAgent("adapter", AgentRole.TRADER, wallet_balance="12.50")
+
+        self.assertIsNotNone(agent.cred)
+        self.assertEqual(agent.agent_id, "adapter")
+        self.assertTrue(agent.cred.identity.agent_id)
+        self.assertEqual(agent.cred.identity.name, "adapter")
+
+    def test_wallet_compatibility_uses_agentcred_as_source_of_truth(self):
+        agent = BaseAgent("adapter", AgentRole.TRADER, wallet_balance="10.00")
+
+        self.assertEqual(agent.wallet_balance, 10.0)
+        self.assertEqual(agent.wallet_credits, agent.cred.wallet.balance)
+
+        agent.debit("2.25")
+        self.assertEqual(agent.wallet_balance, 7.75)
+        self.assertEqual(agent.wallet_credits, agent.cred.wallet.balance)
+
+        agent.credit("1.50")
+        self.assertEqual(agent.wallet_balance, 9.25)
+        self.assertEqual(agent.wallet_credits, agent.cred.wallet.balance)
 
 
 class WalletAndStakeTests(unittest.TestCase):

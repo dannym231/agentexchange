@@ -1,8 +1,9 @@
 import os
 import json
-import math
 from anthropic import Anthropic
+from agentcred import AgentCredAgent, Wallet
 from dotenv import load_dotenv
+from core.models import credits
 
 load_dotenv()
 client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -10,12 +11,17 @@ client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 class BaseAgent:
     def __init__(self, agent_id: str, role, wallet_balance: float = 10.0):
-        if not math.isfinite(wallet_balance) or wallet_balance < 0:
+        wallet_balance = credits(wallet_balance)
+        if wallet_balance < 0:
             raise ValueError("wallet balance must be finite and non-negative")
-        self.agent_id = agent_id
+        self._agent_id = agent_id
+        self.cred = AgentCredAgent(agent_id, initial_balance=wallet_balance)
         self.role = role
-        self.wallet_balance = wallet_balance
         self.conversation_history = []
+
+    @property
+    def agent_id(self) -> str:
+        return self._agent_id
 
     def think(self, system_prompt: str, user_message: str) -> str:
         response = client.messages.create(
@@ -58,17 +64,28 @@ class BaseAgent:
                 raw = raw[4:]
         return json.loads(raw.strip())
 
-    def debit(self, amount: float):
-        if not math.isfinite(amount) or amount <= 0:
+    def debit(self, amount):
+        amount = credits(amount)
+        if amount <= 0:
             raise ValueError("debit amount must be finite and positive")
-        if amount > self.wallet_balance:
+        if amount > self.wallet_credits:
             raise ValueError("debit amount exceeds wallet balance")
-        self.wallet_balance -= amount
+        self.cred.wallet.send(Wallet(0), amount, memo="AgentExchange debit")
 
-    def credit(self, amount: float):
-        if not math.isfinite(amount) or amount <= 0:
+    def credit(self, amount):
+        amount = credits(amount)
+        if amount <= 0:
             raise ValueError("credit amount must be finite and positive")
-        self.wallet_balance += amount
+        Wallet(amount).send(self.cred.wallet, amount, memo="AgentExchange credit")
+
+    @property
+    def wallet_balance(self) -> float:
+        """Backward-compatible display/API value; arithmetic uses wallet_credits."""
+        return float(self.wallet_credits)
+
+    @property
+    def wallet_credits(self):
+        return credits(self.cred.wallet.balance)
 
     def __repr__(self):
         return f"[{self.role.value.upper()} {self.agent_id}] balance={self.wallet_balance:.2f}"

@@ -14,6 +14,7 @@ from core.models import (
     RoundState,
     credits,
 )
+from core.treasury import MarketTreasury
 
 COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd"
 FLAT_THRESHOLD_PCT = 0.15
@@ -148,10 +149,17 @@ def calculate_void(predictions: list[Prediction]) -> tuple[SettlementLine, ...]:
 
 
 class Market:
-    def __init__(self, traders: list, round_duration: int = ROUND_DURATION_SECS, price_provider=None):
+    def __init__(
+        self,
+        traders: list,
+        round_duration: int = ROUND_DURATION_SECS,
+        price_provider=None,
+        treasury=None,
+    ):
         self.traders = traders
         self.round_duration = round_duration
         self.price_provider = price_provider or fetch_eth_price
+        self.treasury = treasury if treasury is not None else MarketTreasury()
         self.rounds: list[Round] = []
         self._trader_map = {t.agent_id: t for t in traders}
 
@@ -185,7 +193,11 @@ class Market:
             pending_predictions.append((trader, pred))
 
         for trader, pred in pending_predictions:
-            trader.debit(pred.stake)
+            self.treasury.collect(
+                trader,
+                pred.stake,
+                memo=f"AgentExchange round {round_.id} stake",
+            )
             round_.predictions.append(pred)
 
         return round_.predictions
@@ -227,7 +239,11 @@ class Market:
         for prediction, line in zip(round_.predictions, lines):
             trader = self._trader_map[prediction.agent_id]
             if line.credit > 0:
-                trader.credit(line.credit)
+                self.treasury.pay(
+                    trader,
+                    line.credit,
+                    memo=f"AgentExchange round {round_.id} {line.state.value.lower()}",
+                )
             prediction.mark(line.state, line.pnl)
             if line.state == PredictionState.WON:
                 trader.wins += 1

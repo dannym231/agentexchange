@@ -1,7 +1,7 @@
 import os
 import json
 from anthropic import Anthropic
-from agentcred import AgentCredAgent, Wallet
+from agentcred import AgentCredAgent
 from dotenv import load_dotenv
 from core.models import credits
 
@@ -64,19 +64,25 @@ class BaseAgent:
                 raw = raw[4:]
         return json.loads(raw.strip())
 
-    def debit(self, amount):
+    def debit(self, amount, recipient_wallet=None, memo=None):
+        """Compatibility transfer to an explicit market or treasury wallet."""
         amount = credits(amount)
         if amount <= 0:
             raise ValueError("debit amount must be finite and positive")
         if amount > self.wallet_credits:
             raise ValueError("debit amount exceeds wallet balance")
-        self.cred.wallet.send(Wallet(0), amount, memo="AgentExchange debit")
+        if recipient_wallet is None:
+            raise ValueError("recipient wallet is required for debit")
+        return self.cred.wallet.send(recipient_wallet, amount, memo=memo)
 
-    def credit(self, amount):
+    def credit(self, amount, source_wallet=None, memo=None):
+        """Compatibility transfer from an explicit market or treasury wallet."""
         amount = credits(amount)
         if amount <= 0:
             raise ValueError("credit amount must be finite and positive")
-        Wallet(amount).send(self.cred.wallet, amount, memo="AgentExchange credit")
+        if source_wallet is None:
+            raise ValueError("source wallet is required for credit")
+        return source_wallet.send(self.cred.wallet, amount, memo=memo)
 
     @property
     def wallet_balance(self) -> float:

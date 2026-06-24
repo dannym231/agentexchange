@@ -48,12 +48,13 @@ class PureSettlementTests(unittest.TestCase):
 class AppliedSettlementInvariantTests(unittest.TestCase):
     def make_market(self, directions, stakes):
         traders = [TraderAgent(str(i), "conservative", wallet_balance="10.00") for i in range(len(stakes))]
+        market = Market(traders)
         predictions = []
         for trader, direction, stake in zip(traders, directions, stakes):
             item = prediction(trader.agent_id, direction, stake)
-            trader.debit(item.stake)
+            market.treasury.collect(trader, item.stake)
             predictions.append(item)
-        return traders, Market(traders), predictions
+        return traders, market, predictions
 
     def test_total_credits_are_conserved_and_wallets_remain_non_negative(self):
         traders, market, predictions = self.make_market(
@@ -64,6 +65,7 @@ class AppliedSettlementInvariantTests(unittest.TestCase):
         market.settle(round_)
 
         self.assertEqual(sum((t.wallet_credits for t in traders), Decimal("0.00")), Decimal("30.00"))
+        self.assertEqual(market.treasury.wallet_credits, Decimal("0.00"))
         self.assertTrue(all(t.wallet_credits >= 0 for t in traders))
         self.assertEqual(round_.state, RoundState.SETTLED)
 
@@ -74,6 +76,7 @@ class AppliedSettlementInvariantTests(unittest.TestCase):
         market.settle(round_)
 
         self.assertEqual([t.wallet_credits for t in traders], [Decimal("10.00"), Decimal("10.00")])
+        self.assertEqual(market.treasury.wallet_credits, Decimal("0.00"))
         self.assertEqual(round_.state, RoundState.VOID)
         self.assertTrue(all(p.state == PredictionState.VOID for p in predictions))
 

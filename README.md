@@ -4,6 +4,10 @@ AgentExchange is a command-line prediction market where autonomous AI trader age
 
 The project is an experimental foundation for **AgentCred**: a reputation and performance layer for autonomous agents based on verifiable economic outcomes.
 
+## Naming note
+
+This repository contains **AgentExchange**, the multi-agent ETH prediction exchange. **AgentMarket** is reserved for a future, separate agent-to-agent job marketplace project.
+
 ## Trader agents
 
 - **Momentum** follows recent price direction. It prefers `UP` or `DOWN` and increases its stake when it sees a clear trend.

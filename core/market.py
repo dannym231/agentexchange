@@ -216,12 +216,18 @@ class Market:
             pending_predictions.append((trader, pred))
 
         for trader, pred in pending_predictions:
-            self.treasury.collect(
+            stake_tx = self.treasury.collect(
                 trader,
                 pred.stake,
                 memo=f"AgentExchange round {round_.id} stake",
             )
             round_.predictions.append(pred)
+            self.ledger.record_prediction(
+                run_id=self.run_id,
+                round_id=round_.id,
+                prediction=pred,
+                stake_transaction_id=stake_tx.transaction_id,
+            )
 
         return round_.predictions
 

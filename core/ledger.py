@@ -33,6 +33,16 @@ class NullLedger:
     ) -> None:
         pass
 
+    def record_prediction(
+        self,
+        *,
+        run_id: str,
+        round_id: int,
+        prediction,
+        stake_transaction_id: str,
+    ) -> None:
+        pass
+
 
 class SQLiteLedger:
     """Small SQLite audit ledger for AgentExchange runs and prices."""
@@ -79,6 +89,21 @@ class SQLiteLedger:
                     kind TEXT NOT NULL,
                     price TEXT NOT NULL,
                     source TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (run_id, round_id) REFERENCES rounds(run_id, round_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS predictions (
+                    prediction_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    round_id INTEGER NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    stake TEXT NOT NULL,
+                    reasoning TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    pnl TEXT,
+                    stake_transaction_id TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (run_id, round_id) REFERENCES rounds(run_id, round_id)
                 );
@@ -150,6 +175,37 @@ class SQLiteLedger:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (uuid4().hex, run_id, round_id, kind, str(price), source, utc_now()),
+            )
+
+    def record_prediction(
+        self,
+        *,
+        run_id: str,
+        round_id: int,
+        prediction,
+        stake_transaction_id: str,
+    ) -> None:
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO predictions (
+                    prediction_id, run_id, round_id, agent_id, direction, stake,
+                    reasoning, state, pnl, stake_transaction_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    uuid4().hex,
+                    run_id,
+                    round_id,
+                    prediction.agent_id,
+                    prediction.direction,
+                    str(prediction.stake),
+                    prediction.reasoning,
+                    prediction.state.value,
+                    None if prediction.pnl is None else str(prediction.pnl),
+                    stake_transaction_id,
+                    utc_now(),
+                ),
             )
 
     def _round_values(self, run_id: str, round_) -> tuple:

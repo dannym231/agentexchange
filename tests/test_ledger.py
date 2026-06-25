@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 import unittest
 
+from agents.trader import MockTraderAgent
 from core.ledger import NullLedger, SQLiteLedger
 from core.market import Market, MockPriceFeed
 
@@ -15,6 +16,11 @@ ROOT = Path(__file__).resolve().parents[1]
 def fetch_scalar(db_path, sql):
     with sqlite3.connect(db_path) as conn:
         return conn.execute(sql).fetchone()[0]
+
+
+class FailingTreasury:
+    def collect(self, trader, amount, memo=None):
+        raise RuntimeError("stake transfer failed")
 
 
 class LedgerTests(unittest.TestCase):
@@ -44,7 +50,7 @@ class LedgerTests(unittest.TestCase):
                         "SELECT name FROM sqlite_master WHERE type = 'table'"
                     )
                 }
-            self.assertEqual(tables, {"runs", "rounds", "price_observations"})
+            self.assertEqual(tables, {"runs", "rounds", "price_observations", "predictions"})
 
     def test_mock_cli_with_ledger_records_run_rounds_and_price_observations(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -70,6 +76,7 @@ class LedgerTests(unittest.TestCase):
                 fetch_scalar(db_path, "SELECT COUNT(*) FROM price_observations"),
                 6,
             )
+            self.assertEqual(fetch_scalar(db_path, "SELECT COUNT(*) FROM predictions"), 12)
             self.assertEqual(
                 fetch_scalar(db_path, "SELECT COUNT(*) FROM rounds WHERE state = 'SETTLED'"),
                 3,
@@ -95,6 +102,45 @@ class LedgerTests(unittest.TestCase):
                 ),
                 3,
             )
+            self.assertEqual(
+                fetch_scalar(
+                    db_path,
+                    "SELECT COUNT(*) FROM predictions WHERE stake_transaction_id IS NOT NULL",
+                ),
+                12,
+            )
+            self.assertEqual(
+                fetch_scalar(db_path, "SELECT COUNT(*) FROM predictions WHERE state = 'PENDING'"),
+                12,
+            )
+            self.assertEqual(
+                fetch_scalar(db_path, "SELECT COUNT(*) FROM predictions WHERE pnl IS NULL"),
+                12,
+            )
+            self.assertEqual(
+                fetch_scalar(db_path, "SELECT COUNT(*) FROM predictions WHERE typeof(stake) = 'text'"),
+                12,
+            )
+
+    def test_failed_stake_transfer_does_not_record_prediction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "agentexchange.sqlite3"
+            ledger = SQLiteLedger(db_path)
+            trader = MockTraderAgent("momentum-01", "momentum", wallet_balance=20.0)
+            market = Market(
+                [trader],
+                price_provider=MockPriceFeed(),
+                treasury=FailingTreasury(),
+                ledger=ledger,
+            )
+
+            round_ = market.open_round()
+            with self.assertRaisesRegex(RuntimeError, "stake transfer failed"):
+                market.collect_predictions(round_)
+
+            self.assertEqual(round_.predictions, [])
+            self.assertEqual(fetch_scalar(db_path, "SELECT COUNT(*) FROM predictions"), 0)
+            ledger.close()
 
 
 if __name__ == "__main__":

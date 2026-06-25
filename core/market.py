@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN
+import json
 import math
 import time
 
@@ -21,6 +22,7 @@ FLAT_THRESHOLD_PCT = 0.15
 ROUND_DURATION_SECS = 300
 PRICE_FETCH_ATTEMPTS = 3
 PRICE_RETRY_DELAY_SECS = 1
+REPUTATION_EVENT_CATEGORY = "agentexchange.prediction"
 
 
 class MarketDataError(RuntimeError):
@@ -251,4 +253,30 @@ class Market:
                 trader.losses += 1
             else:
                 trader.pushes += 1
+            self._record_reputation_event(round_, trader, prediction, line)
         round_.state = state
+
+    def _record_reputation_event(self, round_: Round, trader, prediction: Prediction, line: SettlementLine) -> None:
+        result_by_state = {
+            PredictionState.WON: "win",
+            PredictionState.LOST: "loss",
+            PredictionState.VOID: "void",
+        }
+        details = json.dumps(
+            {
+                "round_id": round_.id,
+                "prediction_direction": prediction.direction,
+                "actual_outcome": round_.outcome,
+                "stake": str(prediction.stake),
+                "pnl": str(prediction.pnl),
+                "result": result_by_state[line.state],
+                "wallet_balance_after": str(trader.wallet_credits),
+            },
+            separators=(",", ":"),
+        )
+        if line.state == PredictionState.WON:
+            trader.cred.reputation.record_completed(REPUTATION_EVENT_CATEGORY, details=details)
+        elif line.state == PredictionState.LOST:
+            trader.cred.reputation.record_failed(REPUTATION_EVENT_CATEGORY, details=details)
+        else:
+            trader.cred.reputation.record_void(REPUTATION_EVENT_CATEGORY, details=details)

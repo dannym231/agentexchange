@@ -1,3 +1,4 @@
+import json
 import math
 import unittest
 from unittest.mock import Mock, patch
@@ -96,6 +97,10 @@ class WalletAndStakeTests(unittest.TestCase):
 
 
 class SettlementTests(unittest.TestCase):
+    def reputation_event_details(self, trader):
+        [event] = trader.cred.reputation.history
+        return event, json.loads(event.details)
+
     def test_no_winner_voids_and_refunds_round(self):
         traders = [
             TraderAgent("one", "momentum", wallet_balance=10.0),
@@ -119,6 +124,38 @@ class SettlementTests(unittest.TestCase):
         self.assertEqual(sum(t.wallet_balance for t in traders), 20.0)
         self.assertEqual(market.treasury.wallet_credits, 0)
 
+    def test_void_refund_records_neutral_reputation_events(self):
+        traders = [
+            TraderAgent("one", "momentum", wallet_balance=10.0),
+            TraderAgent("two", "contrarian", wallet_balance=10.0),
+        ]
+        predictions = [
+            Prediction("one", "UP", 2.0, "test"),
+            Prediction("two", "FLAT", 3.0, "test"),
+        ]
+        market = Market(traders)
+        for trader, prediction in zip(traders, predictions):
+            market.treasury.collect(trader, prediction.stake)
+        round_ = Round(id=7, open_price=100.0, close_price=99.0, outcome="DOWN", predictions=predictions)
+
+        market.settle(round_)
+
+        for trader, direction, stake in (
+            (traders[0], "UP", "2.00"),
+            (traders[1], "FLAT", "3.00"),
+        ):
+            event, details = self.reputation_event_details(trader)
+            self.assertEqual(event.outcome, "void")
+            self.assertEqual(event.category, "agentexchange.prediction")
+            self.assertEqual(trader.cred.reputation.score, 50.0)
+            self.assertEqual(details["round_id"], 7)
+            self.assertEqual(details["prediction_direction"], direction)
+            self.assertEqual(details["actual_outcome"], "DOWN")
+            self.assertEqual(details["stake"], stake)
+            self.assertEqual(details["pnl"], "0.00")
+            self.assertEqual(details["result"], "void")
+            self.assertEqual(details["wallet_balance_after"], "10.00")
+
     def test_normal_settlement_preserves_total_credits(self):
         winner = TraderAgent("winner", "momentum", wallet_balance=10.0)
         loser = TraderAgent("loser", "contrarian", wallet_balance=10.0)
@@ -137,6 +174,73 @@ class SettlementTests(unittest.TestCase):
         self.assertEqual(winner.wallet_balance, 13.0)
         self.assertEqual(loser.wallet_balance, 7.0)
         self.assertEqual(market.treasury.wallet_credits, 0)
+
+    def test_win_loss_settlement_records_completed_and_failed_reputation_events(self):
+        winner = TraderAgent("winner", "momentum", wallet_balance=10.0)
+        loser = TraderAgent("loser", "contrarian", wallet_balance=10.0)
+        predictions = [
+            Prediction("winner", "UP", 2.0, "test"),
+            Prediction("loser", "DOWN", 3.0, "test"),
+        ]
+        market = Market([winner, loser])
+        market.treasury.collect(winner, 2.0)
+        market.treasury.collect(loser, 3.0)
+        round_ = Round(id=3, open_price=100.0, close_price=101.0, outcome="UP", predictions=predictions)
+
+        market.settle(round_)
+
+        winner_event, winner_details = self.reputation_event_details(winner)
+        self.assertEqual(winner_event.outcome, "completed")
+        self.assertEqual(winner_event.category, "agentexchange.prediction")
+        self.assertEqual(winner.cred.reputation.score, 55.0)
+        self.assertEqual(
+            winner_details,
+            {
+                "round_id": 3,
+                "prediction_direction": "UP",
+                "actual_outcome": "UP",
+                "stake": "2.00",
+                "pnl": "3.00",
+                "result": "win",
+                "wallet_balance_after": "13.00",
+            },
+        )
+
+        loser_event, loser_details = self.reputation_event_details(loser)
+        self.assertEqual(loser_event.outcome, "failed")
+        self.assertEqual(loser_event.category, "agentexchange.prediction")
+        self.assertEqual(loser.cred.reputation.score, 40.0)
+        self.assertEqual(
+            loser_details,
+            {
+                "round_id": 3,
+                "prediction_direction": "DOWN",
+                "actual_outcome": "UP",
+                "stake": "3.00",
+                "pnl": "-3.00",
+                "result": "loss",
+                "wallet_balance_after": "7.00",
+            },
+        )
+
+    def test_duplicate_settlement_does_not_duplicate_reputation_history(self):
+        winner = TraderAgent("winner", "momentum", wallet_balance=10.0)
+        loser = TraderAgent("loser", "contrarian", wallet_balance=10.0)
+        predictions = [
+            Prediction("winner", "UP", 2.0, "test"),
+            Prediction("loser", "DOWN", 3.0, "test"),
+        ]
+        market = Market([winner, loser])
+        market.treasury.collect(winner, 2.0)
+        market.treasury.collect(loser, 3.0)
+        round_ = Round(id=1, open_price=100.0, close_price=101.0, outcome="UP", predictions=predictions)
+        market.settle(round_)
+
+        with self.assertRaisesRegex(ValueError, "closed round"):
+            market.settle(round_)
+
+        self.assertEqual(len(winner.cred.reputation.history), 1)
+        self.assertEqual(len(loser.cred.reputation.history), 1)
 
 
 class MarketDataTests(unittest.TestCase):

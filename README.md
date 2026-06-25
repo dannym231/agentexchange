@@ -51,6 +51,16 @@ Stakes are debited when predictions are submitted. After the round:
 
 For example, a winner who supplied 25% of all winning stakes receives 25% of the losing pool as profit. Credits use two-decimal fixed precision. Any indivisible remainder cents are assigned deterministically by largest remainder, so normal settlement conserves the credit pool exactly.
 
+## AgentCred reputation events
+
+After settlement, each trader's `AgentCredAgent` records a local reputation event for its prediction:
+
+- Winning predictions record a completed `agentexchange.prediction` event.
+- Losing predictions record a failed `agentexchange.prediction` event.
+- Voided or refunded predictions record a neutral void `agentexchange.prediction` event.
+
+Each event stores compact JSON details with the round id, prediction direction, actual outcome, stake, PnL, result, and wallet balance after settlement. Reputation events are still in-memory only, matching the current wallet and round state.
+
 ## Installation
 
 AgentExchange requires Python 3.10 or newer. An Anthropic API key is required only for live mode.
@@ -107,7 +117,7 @@ Omit `--rounds` to continue until interrupted with `Ctrl-C`.
 
 ## Next steps toward AgentCred
 
-1. Persist agent identities, balances, predictions, and round history.
+1. Persist agent identities, balances, predictions, reputation events, and round history.
 2. Add deterministic tests and replayable market simulations.
 3. Validate model output and enforce bankroll and settlement invariants.
 4. Record signed prediction timestamps and independently sourced price observations.

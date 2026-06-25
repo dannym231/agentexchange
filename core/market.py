@@ -3,8 +3,10 @@ from decimal import Decimal, ROUND_DOWN
 import json
 import math
 import time
+from uuid import uuid4
 
 import requests
+from core.ledger import NullLedger
 from core.models import (
     CREDIT_QUANTUM,
     Direction,
@@ -157,18 +159,37 @@ class Market:
         round_duration: int = ROUND_DURATION_SECS,
         price_provider=None,
         treasury=None,
+        ledger=None,
+        run_id=None,
+        price_source=None,
     ):
         self.traders = traders
         self.round_duration = round_duration
         self.price_provider = price_provider or fetch_eth_price
+        self.price_source = price_source or self._infer_price_source(price_provider)
         self.treasury = treasury if treasury is not None else MarketTreasury()
+        self.ledger = ledger if ledger is not None else NullLedger()
+        self.run_id = run_id or uuid4().hex
         self.rounds: list[Round] = []
         self._trader_map = {t.agent_id: t for t in traders}
+        self.ledger.record_run(
+            run_id=self.run_id,
+            price_source=self.price_source,
+            round_duration=self.round_duration,
+        )
 
     def open_round(self) -> Round:
         price = self.price_provider()
         round_ = Round(id=len(self.rounds) + 1, open_price=price)
         self.rounds.append(round_)
+        self.ledger.record_round(run_id=self.run_id, round_=round_)
+        self.ledger.record_price_observation(
+            run_id=self.run_id,
+            round_id=round_.id,
+            kind="open",
+            price=price,
+            source=self.price_source,
+        )
         return round_
 
     def collect_predictions(self, round_: Round) -> list[Prediction]:
@@ -214,6 +235,14 @@ class Market:
             raise
         round_.outcome = determine_outcome(round_.open_price, round_.close_price)
         round_.state = RoundState.CLOSED
+        self.ledger.update_round(run_id=self.run_id, round_=round_)
+        self.ledger.record_price_observation(
+            run_id=self.run_id,
+            round_id=round_.id,
+            kind="close",
+            price=round_.close_price,
+            source=self.price_source,
+        )
         return round_.close_price, round_.outcome
 
     def void_round(self, round_: Round) -> dict[str, Decimal]:
@@ -221,6 +250,7 @@ class Market:
             raise ValueError("round has already been settled")
         lines = calculate_void(round_.predictions)
         self._apply(round_, lines, RoundState.VOID)
+        self.ledger.update_round(run_id=self.run_id, round_=round_)
         return {line.agent_id: line.pnl for line in lines}
 
     def settle(self, round_: Round) -> dict[str, Decimal]:
@@ -231,7 +261,11 @@ class Market:
             line.state == PredictionState.VOID for line in lines
         ) else RoundState.SETTLED
         self._apply(round_, lines, final_state)
+        self.ledger.update_round(run_id=self.run_id, round_=round_)
         return {line.agent_id: line.pnl for line in lines}
+
+    def _infer_price_source(self, price_provider) -> str:
+        return "mock" if isinstance(price_provider, MockPriceFeed) else "coingecko"
 
     def _apply(self, round_: Round, lines: tuple[SettlementLine, ...], state: RoundState) -> None:
         if len(lines) != len(round_.predictions):

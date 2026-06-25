@@ -4,6 +4,7 @@ import sys
 from anthropic import APIError
 
 from agents.trader import MockTraderAgent, TraderAgent
+from core.ledger import SQLiteLedger
 from core.market import Market, MarketDataError, MockPriceFeed, ROUND_DURATION_SECS
 from core.models import Round
 
@@ -82,22 +83,26 @@ def main():
         print("  [fast mode: 30-second rounds]\n")
 
     max_rounds = None
+    ledger_path = None
     for arg in sys.argv:
         if arg.startswith("--rounds="):
             max_rounds = int(arg.split("=")[1])
+        elif arg.startswith("--ledger="):
+            ledger_path = arg.split("=", 1)[1]
 
     traders = build_traders(mock=mock_mode)
     price_provider = MockPriceFeed() if mock_mode else None
-    market = Market(traders, round_duration=duration, price_provider=price_provider)
+    ledger = SQLiteLedger(ledger_path) if ledger_path else None
+    market = Market(traders, round_duration=duration, price_provider=price_provider, ledger=ledger)
     round_num = 0
 
-    print("=" * 70)
-    mode = "Mock" if mock_mode else "Live"
-    print(f"  AGENTEXCHANGE — {mode} ETH Prediction Market")
-    print("=" * 70)
-    print("  Press Ctrl-C at any time to stop.\n")
-
     try:
+        print("=" * 70)
+        mode = "Mock" if mock_mode else "Live"
+        print(f"  AGENTEXCHANGE — {mode} ETH Prediction Market")
+        print("=" * 70)
+        print("  Press Ctrl-C at any time to stop.\n")
+
         while max_rounds is None or round_num < max_rounds:
             round_num += 1
             print(f"\n  Round {round_num}")
@@ -149,6 +154,9 @@ def main():
 
     except KeyboardInterrupt:
         print("\n\n  Stopped.")
+    finally:
+        if ledger is not None:
+            ledger.close()
 
     print_leaderboard(traders)
 

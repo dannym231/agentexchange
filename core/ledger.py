@@ -43,6 +43,27 @@ class NullLedger:
     ) -> None:
         pass
 
+    def update_prediction_result(
+        self,
+        *,
+        run_id: str,
+        round_id: int,
+        prediction,
+    ) -> None:
+        pass
+
+    def record_settlement_line(
+        self,
+        *,
+        run_id: str,
+        round_id: int,
+        line,
+        settlement_transaction_id: str | None,
+        reputation_event_id: str,
+        wallet_balance_after,
+    ) -> None:
+        pass
+
 
 class SQLiteLedger:
     """Small SQLite audit ledger for AgentExchange runs and prices."""
@@ -105,6 +126,21 @@ class SQLiteLedger:
                     pnl TEXT,
                     stake_transaction_id TEXT NOT NULL,
                     created_at TEXT NOT NULL,
+                    FOREIGN KEY (run_id, round_id) REFERENCES rounds(run_id, round_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS settlement_lines (
+                    run_id TEXT NOT NULL,
+                    round_id INTEGER NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    pnl TEXT NOT NULL,
+                    credit TEXT NOT NULL,
+                    settlement_transaction_id TEXT,
+                    reputation_event_id TEXT NOT NULL,
+                    wallet_balance_after TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (run_id, round_id, agent_id),
                     FOREIGN KEY (run_id, round_id) REFERENCES rounds(run_id, round_id)
                 );
                 """
@@ -204,6 +240,63 @@ class SQLiteLedger:
                     prediction.state.value,
                     None if prediction.pnl is None else str(prediction.pnl),
                     stake_transaction_id,
+                    utc_now(),
+                ),
+            )
+
+    def update_prediction_result(
+        self,
+        *,
+        run_id: str,
+        round_id: int,
+        prediction,
+    ) -> None:
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE predictions
+                SET state = ?,
+                    pnl = ?
+                WHERE run_id = ? AND round_id = ? AND agent_id = ?
+                """,
+                (
+                    prediction.state.value,
+                    None if prediction.pnl is None else str(prediction.pnl),
+                    run_id,
+                    round_id,
+                    prediction.agent_id,
+                ),
+            )
+
+    def record_settlement_line(
+        self,
+        *,
+        run_id: str,
+        round_id: int,
+        line,
+        settlement_transaction_id: str | None,
+        reputation_event_id: str,
+        wallet_balance_after,
+    ) -> None:
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO settlement_lines (
+                    run_id, round_id, agent_id, state, pnl, credit,
+                    settlement_transaction_id, reputation_event_id,
+                    wallet_balance_after, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    round_id,
+                    line.agent_id,
+                    line.state.value,
+                    str(line.pnl),
+                    str(line.credit),
+                    settlement_transaction_id,
+                    reputation_event_id,
+                    str(wallet_balance_after),
                     utc_now(),
                 ),
             )

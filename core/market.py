@@ -280,8 +280,9 @@ class Market:
             raise ValueError("settlement references an unknown trader")
         for prediction, line in zip(round_.predictions, lines):
             trader = self._trader_map[prediction.agent_id]
+            settlement_tx = None
             if line.credit > 0:
-                self.treasury.pay(
+                settlement_tx = self.treasury.pay(
                     trader,
                     line.credit,
                     memo=f"AgentExchange round {round_.id} {line.state.value.lower()}",
@@ -293,10 +294,25 @@ class Market:
                 trader.losses += 1
             else:
                 trader.pushes += 1
-            self._record_reputation_event(round_, trader, prediction, line)
+            reputation_event = self._record_reputation_event(round_, trader, prediction, line)
+            self.ledger.record_settlement_line(
+                run_id=self.run_id,
+                round_id=round_.id,
+                line=line,
+                settlement_transaction_id=None
+                if settlement_tx is None
+                else settlement_tx.transaction_id,
+                reputation_event_id=reputation_event.event_id,
+                wallet_balance_after=trader.wallet_credits,
+            )
+            self.ledger.update_prediction_result(
+                run_id=self.run_id,
+                round_id=round_.id,
+                prediction=prediction,
+            )
         round_.state = state
 
-    def _record_reputation_event(self, round_: Round, trader, prediction: Prediction, line: SettlementLine) -> None:
+    def _record_reputation_event(self, round_: Round, trader, prediction: Prediction, line: SettlementLine):
         result_by_state = {
             PredictionState.WON: "win",
             PredictionState.LOST: "loss",
@@ -315,8 +331,8 @@ class Market:
             separators=(",", ":"),
         )
         if line.state == PredictionState.WON:
-            trader.cred.reputation.record_completed(REPUTATION_EVENT_CATEGORY, details=details)
+            return trader.cred.reputation.record_completed(REPUTATION_EVENT_CATEGORY, details=details)
         elif line.state == PredictionState.LOST:
-            trader.cred.reputation.record_failed(REPUTATION_EVENT_CATEGORY, details=details)
+            return trader.cred.reputation.record_failed(REPUTATION_EVENT_CATEGORY, details=details)
         else:
-            trader.cred.reputation.record_void(REPUTATION_EVENT_CATEGORY, details=details)
+            return trader.cred.reputation.record_void(REPUTATION_EVENT_CATEGORY, details=details)

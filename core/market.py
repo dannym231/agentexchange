@@ -278,6 +278,16 @@ class Market:
             raise ValueError("invalid settlement plan")
         if any(p.agent_id not in self._trader_map for p in round_.predictions):
             raise ValueError("settlement references an unknown trader")
+        total_stakes = sum((p.stake for p in round_.predictions), Decimal("0.00"))
+        total_credits = sum((line.credit for line in lines), Decimal("0.00"))
+        if total_credits != total_stakes:
+            raise AssertionError(
+                f"conservation violated: round {round_.id} collected {total_stakes} "
+                f"in stakes but settlement disburses {total_credits}"
+            )
+        balance_before = sum(
+            (t.wallet_credits for t in self.traders), self.treasury.wallet_credits
+        )
         for prediction, line in zip(round_.predictions, lines):
             trader = self._trader_map[prediction.agent_id]
             settlement_tx = None
@@ -309,6 +319,14 @@ class Market:
                 run_id=self.run_id,
                 round_id=round_.id,
                 prediction=prediction,
+            )
+        balance_after = sum(
+            (t.wallet_credits for t in self.traders), self.treasury.wallet_credits
+        )
+        if balance_after != balance_before:
+            raise AssertionError(
+                f"conservation violated: round {round_.id} changed total credits "
+                f"from {balance_before} to {balance_after}"
             )
         round_.state = state
 

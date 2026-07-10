@@ -1,8 +1,9 @@
 from decimal import Decimal
 import unittest
+from unittest.mock import patch
 
 from agents.trader import TraderAgent
-from core.market import Market, calculate_settlement, determine_outcome
+from core.market import Market, SettlementLine, calculate_settlement, determine_outcome
 from core.models import Prediction, PredictionState, Round, RoundState
 
 
@@ -79,6 +80,22 @@ class AppliedSettlementInvariantTests(unittest.TestCase):
         self.assertEqual(market.treasury.wallet_credits, Decimal("0.00"))
         self.assertEqual(round_.state, RoundState.VOID)
         self.assertTrue(all(p.state == PredictionState.VOID for p in predictions))
+
+    def test_settlement_plan_that_drops_credits_is_rejected(self):
+        traders, market, predictions = self.make_market(["UP", "DOWN"], ["2.00", "3.00"])
+        round_ = Round(1, 100.0, 99.0, "DOWN", predictions)
+        vanishing_plan = tuple(
+            SettlementLine(p.agent_id, PredictionState.LOST, -p.stake, Decimal("0.00"))
+            for p in predictions
+        )
+
+        with patch("core.market.calculate_settlement", return_value=vanishing_plan):
+            with self.assertRaisesRegex(AssertionError, "conservation violated"):
+                market.settle(round_)
+
+        self.assertEqual([t.wallet_credits for t in traders], [Decimal("8.00"), Decimal("7.00")])
+        self.assertEqual(market.treasury.wallet_credits, Decimal("5.00"))
+        self.assertTrue(all(p.state == PredictionState.PENDING for p in predictions))
 
     def test_duplicate_settlement_is_rejected_without_changing_balances(self):
         traders, market, predictions = self.make_market(["UP", "DOWN"], ["2.00", "3.00"])

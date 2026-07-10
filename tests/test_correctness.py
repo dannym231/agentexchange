@@ -54,6 +54,16 @@ class WalletAndStakeTests(unittest.TestCase):
             with self.subTest(amount=amount), self.assertRaises(ValueError):
                 trader.credit(amount)
 
+    def test_zero_balance_trader_sits_out_without_going_negative(self):
+        trader = TraderAgent("trader", "degen", wallet_balance=0.0)
+        trader.predict = Mock()
+        market = Market([trader])
+        predictions = market.collect_predictions(Round(id=1, open_price=100.0))
+        self.assertEqual(predictions, [])
+        trader.predict.assert_not_called()
+        self.assertEqual(trader.wallet_balance, 0.0)
+        self.assertEqual(market.treasury.wallet_credits, 0)
+
     def test_low_balance_trader_is_skipped(self):
         trader = TraderAgent("trader", "conservative", wallet_balance=0.49)
         trader.predict = Mock()

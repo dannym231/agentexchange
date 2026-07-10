@@ -3,7 +3,9 @@ import math
 import unittest
 from unittest.mock import Mock, patch
 
+import httpx
 import requests
+from anthropic import APIConnectionError
 
 from agents.base import BaseAgent
 from agents.trader import MockTraderAgent, TraderAgent
@@ -104,6 +106,21 @@ class WalletAndStakeTests(unittest.TestCase):
             valid.wallet_credits + invalid.wallet_credits + market.treasury.wallet_credits,
             20.0,
         )
+
+    def test_failed_api_call_skips_only_that_agent(self):
+        healthy = TraderAgent("healthy", "momentum", wallet_balance=10.0)
+        broken = TraderAgent("broken", "degen", wallet_balance=10.0)
+        healthy.predict = Mock(return_value=Prediction("healthy", "UP", 2.0, "test"))
+        broken.predict = Mock(
+            side_effect=APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
+        )
+
+        market = Market([healthy, broken])
+        predictions = market.collect_predictions(Round(id=1, open_price=100.0))
+
+        self.assertEqual([p.agent_id for p in predictions], ["healthy"])
+        self.assertEqual(healthy.wallet_balance, 8.0)
+        self.assertEqual(broken.wallet_balance, 10.0)
 
 
 class SettlementTests(unittest.TestCase):

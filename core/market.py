@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN
 import json
@@ -6,6 +7,7 @@ import time
 from uuid import uuid4
 
 import requests
+from anthropic import APIError
 from core.ledger import NullLedger
 from core.models import (
     CREDIT_QUANTUM,
@@ -204,16 +206,21 @@ class Market:
                 f"({pct:+.2f}%) — outcome was {prev.outcome}."
             )
 
+        eligible = [t for t in self.traders if t.wallet_credits >= MIN_STAKE]
         pending_predictions = []
-        for trader in self.traders:
-            if trader.wallet_credits < MIN_STAKE:
-                continue
-            try:
-                pred = trader.predict(round_.open_price, context=context)
-            except (ValueError, KeyError, TypeError, AttributeError) as exc:
-                print(f"  WARNING: Skipping {trader.agent_id}: invalid prediction ({exc})")
-                continue
-            pending_predictions.append((trader, pred))
+        if eligible:
+            with ThreadPoolExecutor(max_workers=len(eligible)) as pool:
+                futures = [
+                    pool.submit(trader.predict, round_.open_price, context=context)
+                    for trader in eligible
+                ]
+                for trader, future in zip(eligible, futures):
+                    try:
+                        pred = future.result()
+                    except (ValueError, KeyError, TypeError, AttributeError, APIError) as exc:
+                        print(f"  WARNING: Skipping {trader.agent_id}: invalid prediction ({exc})")
+                        continue
+                    pending_predictions.append((trader, pred))
 
         for trader, pred in pending_predictions:
             stake_tx = self.treasury.collect(

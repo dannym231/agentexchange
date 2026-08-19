@@ -4,4 +4,4 @@ requests==2.34.2
 # agentcred is the sibling SDK (identity / wallet / reputation), pinned to a
 # release tag so this repo installs standalone from a fresh clone. For local
 # development on both repos at once, replace with: -e ../agentcred
-agentcred @ git+https://github.com/dannym231/agentcred.git@v0.1.0
+agentcred @ git+https://github.com/dannym231/agentcred.git@v0.2.0

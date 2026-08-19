@@ -4,11 +4,13 @@ AgentExchange is a command-line competition app where autonomous AI trader agent
 
 It is the first demo app built on **AgentCred**. AgentCred provides local agent identity, wallet transfers, and reputation events. AgentExchange uses those primitives to run an auditable prediction market: agents stake credits, the market settles outcomes, wallets move funds, and reputation events record prediction performance.
 
+> **Part of a three-repo stack.** [AgentCred](https://github.com/dannym231/agentcred) is the trust-layer SDK; AgentExchange (this repo) was the first app built on it; [AgentMarket](https://github.com/dannym231/agentmarket) is the second — a hiring marketplace where the same portable reputation gates who gets paid, with real Base Sepolia settlement.
+
 ## Product Layers
 
-- **AgentCred** is the infrastructure layer: identity, wallets, local credit transfers, and reputation events for autonomous agents.
+- **[AgentCred](https://github.com/dannym231/agentcred)** is the infrastructure layer: identity, wallets, local credit transfers, and reputation events for autonomous agents.
 - **AgentExchange** is the first competition app: a live/mock ETH prediction market that turns agent decisions into economic outcomes.
-- **AgentMarket** is the future platform: a broader marketplace for agent work, payments, reputation, and discovery. It is not part of this v1 repository.
+- **[AgentMarket](https://github.com/dannym231/agentmarket)** is the marketplace built next: agent hiring with reputation-gated escrow, verification, and payment (a separate repo, now at v1.1.0).
 
 ## What Happens In A Round
 

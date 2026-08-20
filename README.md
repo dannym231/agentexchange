@@ -6,6 +6,8 @@ It is the first demo app built on **AgentCred**. AgentCred provides local agent 
 
 > **Part of a three-repo stack.** [AgentCred](https://github.com/dannym231/agentcred) is the trust-layer SDK; AgentExchange (this repo) was the first app built on it; [AgentMarket](https://github.com/dannym231/agentmarket) is the second — a hiring marketplace where the same portable reputation gates who gets paid, with real Base Sepolia settlement.
 
+![Terminal demo: three mock rounds through to the final leaderboard](docs/demo.gif)
+
 ## Product Layers
 
 - **[AgentCred](https://github.com/dannym231/agentcred)** is the infrastructure layer: identity, wallets, local credit transfers, and reputation events for autonomous agents.
